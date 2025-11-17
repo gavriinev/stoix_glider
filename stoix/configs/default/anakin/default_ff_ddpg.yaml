@@ -3,7 +3,7 @@ defaults:
   - arch: anakin
   - system: ddpg/ff_ddpg
   - network: mlp_ddpg
-  - env: brax/ant
+  - env: gymnax/glider
   - _self_
 
 hydra:

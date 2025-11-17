@@ -56,7 +56,7 @@ loggers:
     seed: ${arch.seed}
   tensorboard:
     _target_: stoix.utils.logger.TensorboardLogger
-    enabled: False
+    enabled: True
 
 # --- Checkpointing ---
 checkpointing:

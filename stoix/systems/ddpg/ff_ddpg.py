@@ -1,6 +1,6 @@
 import copy
 import time
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Tuple, Union
 
 import chex
 import flashbax as fbx
@@ -506,12 +506,15 @@ def learner_setup(
     return learn, actor_network, init_learner_state
 
 
-def run_experiment(_config: DictConfig) -> float:
+def run_experiment(
+    _config: DictConfig, return_actor: bool = False
+) -> Union[float, Tuple[float, ActorApply, FrozenDict]]:
     """Runs experiment."""
     config = copy.deepcopy(_config)
 
     # Calculate total timesteps.
     n_devices = len(jax.devices())
+    # n_devices = 1
     config.num_devices = n_devices
     config = check_total_timesteps(config)
     assert (
@@ -539,6 +542,9 @@ def run_experiment(_config: DictConfig) -> float:
         params=learner_state.params.actor_params.online,
         config=config,
     )
+    # Keep an up-to-date copy of the unreplicated actor parameters.
+    trained_params = unreplicate_batch_dim(learner_state.params.actor_params.online)
+    trained_params_full = learner_state.params.actor_params.online
 
     # Calculate number of updates per evaluation.
     config.arch.num_updates_per_eval = config.arch.num_updates // config.arch.num_evaluation
@@ -567,6 +573,7 @@ def run_experiment(_config: DictConfig) -> float:
     # Run experiment for a total number of evaluations.
     max_episode_return = -jnp.inf
     best_params = unreplicate_batch_dim(learner_state.params.actor_params.online)
+    best_params_full = learner_state.params.actor_params.online
     for eval_step in range(config.arch.num_evaluation):
         # Train.
         start_time = time.time()
@@ -594,9 +601,8 @@ def run_experiment(_config: DictConfig) -> float:
 
         # Prepare for evaluation.
         start_time = time.time()
-        trained_params = unreplicate_batch_dim(
-            learner_output.learner_state.params.actor_params.online
-        )  # Select only actor params
+        trained_params_full = learner_output.learner_state.params.actor_params.online
+        trained_params = unreplicate_batch_dim(trained_params_full)  # Select only actor params
         key_e, *eval_keys = jax.random.split(key_e, n_devices + 1)
         eval_keys = jnp.stack(eval_keys)
         eval_keys = eval_keys.reshape(n_devices, -1)
@@ -622,6 +628,7 @@ def run_experiment(_config: DictConfig) -> float:
 
         if config.arch.absolute_metric and max_episode_return <= episode_return:
             best_params = copy.deepcopy(trained_params)
+            best_params_full = trained_params_full
             max_episode_return = episode_return
 
         # Update runner state to continue training.
@@ -644,11 +651,26 @@ def run_experiment(_config: DictConfig) -> float:
         evaluator_output.episode_metrics["steps_per_second"] = steps_per_eval / elapsed_time
         logger.log(evaluator_output.episode_metrics, t, eval_step, LogEvent.ABSOLUTE)
 
+    final_actor_params_unrep: FrozenDict
+    final_actor_params_full: FrozenDict
+    if config.arch.absolute_metric:
+        final_actor_params_unrep = best_params
+        final_actor_params_full = best_params_full
+    else:
+        final_actor_params_unrep = trained_params
+        final_actor_params_full = trained_params_full
+
+    actor_apply_fn = actor_network.apply
+
     # Stop the logger.
     logger.stop()
     # Record the performance for the final evaluation run. If the absolute metric is not
     # calculated, this will be the final evaluation run.
     eval_performance = float(jnp.mean(evaluator_output.episode_metrics[config.env.eval_metric]))
+
+    if return_actor:
+        return eval_performance, actor_apply_fn, final_actor_params_full
+
     return eval_performance
 
 
