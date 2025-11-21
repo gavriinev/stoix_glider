@@ -113,6 +113,8 @@ venv/
 env.bak/
 venv.bak/
 
+!.venv/lib64/python3.10/site-packages/gymnax/environments/misc/glider.py
+
 # Spyder project settings
 .spyderproject
 .spyproject
